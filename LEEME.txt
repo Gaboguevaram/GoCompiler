@@ -1,5 +1,3 @@
-# GoCompiler
-
 Instrucciones para Compilación y Ejecución
 
 Estructura del Proyecto
