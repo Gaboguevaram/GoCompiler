@@ -1,48 +1,266 @@
-# GoCompiler
+# Go Lexical Analyzer
 
-Instrucciones para Compilación y Ejecución
+A lexical analyzer (scanner / tokenizer) for a subset of the
+[Go](https://go.dev) programming language, written in portable C11.
 
-Estructura del Proyecto
+It implements the **tokenization phase** of a compiler: it reads Go source code
+and turns it into a stream of tokens (keywords, identifiers, literals,
+operators, delimiters), resolving identifiers through a symbol table and
+reporting lexical errors. It is **not** a parser or a full compiler — there is
+no grammar, AST or code generation. The architecture is, however, deliberately
+shaped so a parser can be added on top later (see [Future work](#future-work)).
 
-	main.c - Programa principal que llama al analizador léxico.
+The focus of the project is on the systems-level concerns of a scanner:
+a hand-written finite-state machine, an efficient double-buffered reader, and
+careful manual memory management with a single, well-defined ownership model.
 
-	AL.h - Fichero de acceso al analizador lexico.
+---
 
-	AL.c - Implementacion del analizador lexico.
+## Contents
 
-	SE.h - Fichero .h del sistema de entrada.
+- [What it recognizes](#what-it-recognizes)
+- [How it works](#how-it-works)
+  - [Scanning: a hand-written DFA](#scanning-a-hand-written-dfa)
+  - [Input buffering: twin buffer with sentinels](#input-buffering-twin-buffer-with-sentinels)
+  - [Memory management](#memory-management)
+- [Building and running](#building-and-running)
+- [Example: input to token stream](#example-input-to-token-stream)
+- [Lexical error handling](#lexical-error-handling)
+- [Project layout](#project-layout)
+- [Testing](#testing)
+- [Checking for memory leaks](#checking-for-memory-leaks)
+- [Design decisions / what I learned](#design-decisions--what-i-learned)
+- [Future work](#future-work)
+- [License](#license)
 
-	SE.c - Implementacion sistema de entrada.
+## What it recognizes
 
-	TS.h - Fichero con el que se accede la tabla de simbolos.
+| Category        | Examples                                                                 |
+|-----------------|--------------------------------------------------------------------------|
+| **Keywords**    | the 25 Go reserved words: `func`, `var`, `for`, `range`, `chan`, `go`, `select`, `defer`, `map`, `struct`, `interface`, … |
+| **Identifiers** | `[A-Za-z_][A-Za-z0-9_]*`, looked up / inserted in the symbol table        |
+| **Integers**    | decimal `42`, hexadecimal `0xBadFace`                                     |
+| **Floats**      | `3.14`, `1e-11`, `.1273E2`, `4.e+0`                                       |
+| **Imaginary**   | `0i`, `1.e0i`                                                             |
+| **Strings**     | `"hello, \"world\""` (with escaped quotes)                                |
+| **Operators**   | `+ += ++  - -= --  * *=  / /=  % %=  & &= && &^ &^=  \| \|= \|\|  ^ ^=  == !=  < <= << <<= <-  > >= >> >>=  = :=` |
+| **Delimiters**  | `( ) [ ] { } , ;` (emitted with their ASCII value)                        |
+| **Comments**    | `// line` and `/* block */` (consumed, not emitted)                       |
+| **Inserted `;`**| Go's [automatic semicolon insertion](https://go.dev/ref/spec#Semicolons) is emulated at the lexer level |
 
-	TS.c - Implementacion de la tabla de símbolos.
+Each token is reported as `<type,"lexeme">`, where `type` is a numeric code
+defined in [`include/tokens.h`](include/tokens.h). Single-character delimiters
+use their raw ASCII value (e.g. `;` is `59`).
 
-	tabla_hash_encadenamiento.h - Fichero interfaz con la tabla hash, usada por TS para la implementación de la tabla hash.
+## How it works
 
-	tabla_hash_encadenamiento.c - Implementación y código de la tabla hash.
+### Scanning: a hand-written DFA
 
-	lista.h - Archivo de cabecera con definiciones de estructuras y funciones, usada por la tabla hash para el encadenamiento.
+The scanner is a **hand-written deterministic finite automaton**, not a
+table-driven or regex-generated one. [`next_token()`](src/lexer.c) reads the
+first character and dispatches to a per-category routine. The numeric and string
+routines are explicit state machines (`while` loop over a `state` variable);
+the operator routines are short fixed look-ahead helpers. Going character by
+character keeps the control flow easy to follow and makes the maximal-munch and
+look-ahead decisions explicit.
 
-	lista.c - Implementación de las funciones de la lista enlazada.
+One detail worth highlighting: the scanner emulates Go's **automatic semicolon
+insertion**. When a token that can end a statement is followed by a newline, the
+lexer emits a synthetic `;`, just as the Go compiler does before parsing.
 
-	errores.h - Archivo de cabecera de las funciones de gestión de errores.
+### Input buffering: twin buffer with sentinels
 
-	errores.c - Implementación de la gestión de errores.
+Reading one byte at a time with a system call per character would be slow. The
+input module ([`src/input_buffer.c`](src/input_buffer.c)) instead uses the
+classic **two-block (twin) buffer with sentinels** from the Dragon Book:
 
-	definiciones.h - Archivo de definiciones.
+```
+ physical buffer: 2*N + 2 bytes
+ ┌───────────────┬───┬───────────────┬───┐
+ │   block A (N) │ S │   block B (N) │ S │     S = sentinel byte (0xFF)
+ └───────────────┴───┴───────────────┴───┘
+   ^start  ^forward
+```
 
-	concurrentSum.go - Archivo de entrada.
+Two pointers walk the buffer: `start` marks the beginning of the current lexeme
+and `forward` is the look-ahead cursor. Each block ends in a sentinel byte. When
+`forward` reaches a sentinel, the **other** block is refilled with a single
+`fread`, so the program performs roughly one read per `N` characters instead of
+one per character. The sentinel doubles as the end-of-input marker, which lets
+the hot loop test a single byte instead of separately checking the buffer
+length on every character. The reader also supports pushing a character back
+(`unread_char`) across the block boundary, and detects the pathological case of
+a lexeme longer than a whole block.
 
-Compilación
-	Simplemente ejecutar en bash el script "compilacion.sh" en el mismo directorio donde estén todos los archivos. Se generará un ejecutable llamado "compiladorGO".
+`N` (the block size) is a compile-time constant in
+[`include/input_buffer.h`](include/input_buffer.h); it is intentionally small
+(16) so the buffer-refill and wrap-around paths are exercised even by short
+inputs.
 
-Ejecución
-	Ejecutar el ejecutable sin pasar ningún argumento. Es necesario tener el archivo "concurrentSum.go" en el mismo directorio que el ejecutable. Si se desea cambiar el fichero a analizar se debe modificar la variable global "archivo" en SE.h.
-	Para cambiar el tamaño del bloque también se puede modificar la variable global "N" en la misma sección de código. Por defecto está en 16.
+### Memory management
 
-	
+The project uses manual allocation with **one owner per allocation**:
 
+- The **symbol table** ([`src/symbol_table.c`](src/symbol_table.c)) is a hash
+  table with separate chaining (FNV-1a hash, 53 buckets). It owns every lexeme
+  it stores: keyword strings are duplicated on load, and identifier lexemes are
+  handed over by the lexer. When an identifier is seen again, the caller's
+  duplicate is freed and the pointer is rewritten to the table-owned copy.
+  Everything is released once in `symtable_free()`.
+- **Number and string** lexemes are heap-allocated to their exact length and
+  owned by the driver, which frees them right after printing.
+- **Operators and delimiters** use static string literals and are never freed.
 
+This single-ownership discipline is what makes the analyzer leak-free under
+Valgrind (see [below](#checking-for-memory-leaks)).
 
+## Building and running
 
+Requirements: a C11 compiler (`gcc` or `clang`) and `make`, in a POSIX-like
+environment (Linux, macOS, WSL, or MSYS2 / Git Bash on Windows).
+
+```sh
+make            # build -> build/go-lexer
+make run        # scan the bundled examples/concurrent_sum.go
+./build/go-lexer examples/hello.go
+```
+
+By default the driver also prints the symbol table before and after scanning.
+Pass `--tokens-only` to print just the token stream:
+
+```sh
+./build/go-lexer --tokens-only examples/hello.go
+```
+
+## Example: input to token stream
+
+Input:
+
+```go
+x := 42
+```
+
+Output (`--tokens-only`):
+
+```
+<400,"x">      # identifier  (TOKEN_ID)
+<375,":=">     # short variable declaration (OP_DEFINE)
+<376,"42">     # integer literal (LIT_INT)
+<59,";">       # semicolon inserted automatically before the newline
+```
+
+(The `#` annotations are added here for clarity; the program prints only the
+`<type,"lexeme">` lines.)
+
+## Lexical error handling
+
+Lexical errors are reported inline, in deterministic order with the token
+stream, and scanning continues so that more than one problem can be surfaced in
+a single run. Detected conditions include:
+
+- **Unterminated string** — end of input is reached before the closing quote:
+  `LEXICAL ERROR: unterminated string literal`
+- **Invalid / malformed token** — e.g. a malformed number such as `0z`:
+  `LEXICAL ERROR: invalid character or malformed token`
+- **Lexeme longer than a buffer block** — reported as a diagnostic; the lexeme
+  is still returned, or truncated if it cannot fit.
+
+A fatal `could not open input file` error is reported on stderr.
+
+## Project layout
+
+```
+go-lexer/
+├── include/          # public headers
+│   ├── tokens.h          # token codes + the Token struct
+│   ├── lexer.h           # scanner API (next_token)
+│   ├── input_buffer.h    # twin-buffer reader API
+│   ├── symbol_table.h    # symbol table API
+│   ├── hash_table.h      # hash table (separate chaining)
+│   ├── list.h            # linked list used by the hash table
+│   └── errors.h          # error reporting
+├── src/              # implementation (one .c per header + main.c)
+├── examples/         # sample Go programs
+├── tests/            # golden tests (cases + expected token streams)
+├── legacy/           # original Spanish-language version, kept for reference
+├── Makefile
+└── LICENSE
+```
+
+`legacy/` contains the original, untranslated version of the project and is not
+part of the build; it is kept only for comparison.
+
+## Testing
+
+Golden tests live in [`tests/`](tests/): each `cases/<name>.go` is scanned and
+its token stream compared against `cases/<name>.expected`.
+
+```sh
+make test          # verify against the committed expected token streams
+make test-record   # regenerate the expected files from the current build
+```
+
+The cases cover identifiers and keyword lookup, automatic semicolon insertion,
+compound operators, and the two lexical-error paths above. See
+[`tests/README.md`](tests/README.md) for details (including a note on how the
+expected files were produced).
+
+## Checking for memory leaks
+
+The Makefile provides a Valgrind target:
+
+```sh
+make valgrind      # valgrind --leak-check=full --error-exitcode=1 on the example
+```
+
+Valgrind runs on Linux/macOS (and Windows via WSL); it is not available on
+native Windows. Scanning [`examples/concurrent_sum.go`](examples/concurrent_sum.go)
+under Valgrind 3.15 reports a clean run:
+
+```
+total heap usage: 314 allocs, 314 frees, 9,879 bytes allocated
+All heap blocks were freed -- no leaks are possible
+ERROR SUMMARY: 0 errors from 0 contexts
+```
+
+Every allocation is released exactly once, which is what the single-ownership
+model above is there to guarantee. The project also builds warning-free with
+`-Wall -Wextra -std=c11`.
+
+## Design decisions / what I learned
+
+- **A hand-written DFA over a generator.** Writing the state machines by hand
+  (rather than using `lex`/`flex`) made maximal munch, look-ahead, and push-back
+  concrete, and kept the project dependency-free and easy to read.
+- **Buffering is a real performance lever.** Implementing the twin buffer with
+  sentinels showed why scanners are structured this way: the sentinel collapses
+  the "end of buffer?" and "end of file?" checks into a single byte comparison
+  on the hot path, and block-at-a-time refills keep system calls down.
+- **Ownership has to be designed, not improvised.** The first version leaked
+  every keyword and repeated identifier and had an off-by-one in the lexeme
+  allocator. Settling on "the symbol table owns identifier/keyword lexemes; the
+  driver owns number/string lexemes; operators are literals" turned a tangle of
+  `free()` calls into one rule per allocation, and made the leak-free result
+  verifiable with Valgrind.
+- **Valgrind earns its keep on the paths you never look at.** The lexeme
+  builder sized its allocation *before* the truncation logic repositioned the
+  lexeme's start pointer, so any lexeme longer than one block wrote past the end
+  of its buffer. It never crashed: it just printed one result normally and a
+  different one under Valgrind, which is exactly how undefined behavior
+  announces itself. Measuring the span *after* the adjustment instead of before
+  fixed it — a reordering, not new logic.
+- **Emulating Go's semicolon insertion in the lexer** was a good lesson in how
+  much of a language's "grammar" is actually resolved during tokenization.
+
+## Future work
+
+- **A parser on top.** `next_token()` already exposes exactly the interface a
+  recursive-descent or table-driven parser needs (pull one token at a time),
+  and the symbol table is in place, so adding a syntax-analysis phase that
+  builds an AST is the natural next step.
+- Track line/column numbers in each token for better diagnostics.
+- Replace the magic `"char"` / `""` lexeme markers with explicit token kinds.
+
+## License
+
+Released under the [MIT License](LICENSE).

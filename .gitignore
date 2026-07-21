@@ -1,0 +1,19 @@
+# Build output
+/build/
+*.o
+*.obj
+*.exe
+go-lexer
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Out-dated files
+legacy/
