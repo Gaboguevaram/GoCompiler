@@ -227,40 +227,6 @@ Every allocation is released exactly once, which is what the single-ownership
 model above is there to guarantee. The project also builds warning-free with
 `-Wall -Wextra -std=c11`.
 
-## Design decisions / what I learned
-
-- **A hand-written DFA over a generator.** Writing the state machines by hand
-  (rather than using `lex`/`flex`) made maximal munch, look-ahead, and push-back
-  concrete, and kept the project dependency-free and easy to read.
-- **Buffering is a real performance lever.** Implementing the twin buffer with
-  sentinels showed why scanners are structured this way: the sentinel collapses
-  the "end of buffer?" and "end of file?" checks into a single byte comparison
-  on the hot path, and block-at-a-time refills keep system calls down.
-- **Ownership has to be designed, not improvised.** The first version leaked
-  every keyword and repeated identifier and had an off-by-one in the lexeme
-  allocator. Settling on "the symbol table owns identifier/keyword lexemes; the
-  driver owns number/string lexemes; operators are literals" turned a tangle of
-  `free()` calls into one rule per allocation, and made the leak-free result
-  verifiable with Valgrind.
-- **Valgrind earns its keep on the paths you never look at.** The lexeme
-  builder sized its allocation *before* the truncation logic repositioned the
-  lexeme's start pointer, so any lexeme longer than one block wrote past the end
-  of its buffer. It never crashed: it just printed one result normally and a
-  different one under Valgrind, which is exactly how undefined behavior
-  announces itself. Measuring the span *after* the adjustment instead of before
-  fixed it — a reordering, not new logic.
-- **Emulating Go's semicolon insertion in the lexer** was a good lesson in how
-  much of a language's "grammar" is actually resolved during tokenization.
-
-## Future work
-
-- **A parser on top.** `next_token()` already exposes exactly the interface a
-  recursive-descent or table-driven parser needs (pull one token at a time),
-  and the symbol table is in place, so adding a syntax-analysis phase that
-  builds an AST is the natural next step.
-- Track line/column numbers in each token for better diagnostics.
-- Replace the magic `"char"` / `""` lexeme markers with explicit token kinds.
-
 ## License
 
 Released under the [MIT License](LICENSE).
