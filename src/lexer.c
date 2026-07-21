@@ -956,10 +956,13 @@ Token next_token(void) {
                 t.type = OP_NOT_EQUAL;
                 sync_lexeme_start();
                 return t;
-            } else {
-                unread_char();
             }
-            /* fall through - a lone '!' head is scanned like an identifier */
+            /* not '!=': emit a standalone '!' token */
+            unread_char();
+            t.lexeme = "char";
+            t.type = '!';
+            sync_lexeme_start();
+            return t;
         case '_': /* identifiers may start with '_' */
             scan_identifier(c);
             is_identifier = 1;
