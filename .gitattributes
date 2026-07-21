@@ -1,0 +1,19 @@
+# Keep line endings stable across platforms.
+#
+# Everything here is stored *and checked out* with LF, even on Windows, where
+# git's core.autocrlf would otherwise rewrite files to CRLF.
+#
+# This is not cosmetic. The scanner treats '\r' as an ordinary character, so a
+# CRLF checkout would change the token stream (automatic semicolon insertion
+# looks for '\n') and break the golden tests. A CRLF shell script also fails
+# to start under bash.
+
+* text=auto eol=lf
+
+# Files whose exact bytes the build and tests depend on.
+*.c        text eol=lf
+*.h        text eol=lf
+*.go       text eol=lf
+*.expected text eol=lf
+*.sh       text eol=lf
+Makefile   text eol=lf
