@@ -44,7 +44,7 @@ careful manual memory management with a single, well-defined ownership model.
 | **Imaginary**   | `0i`, `1.e0i`                                                             |
 | **Strings**     | `"hello, \"world\""` (with escaped quotes)                                |
 | **Operators**   | `+ += ++  - -= --  * *=  / /=  % %=  & &= && &^ &^=  \| \|= \|\|  ^ ^=  == !=  < <= << <<= <-  > >= >> >>=  = :=` |
-| **Delimiters**  | `( ) [ ] { } , ;` (emitted with their ASCII value)                        |
+| **Delimiters**  | `( ) [ ] { } , ; .` (emitted with their ASCII value)                      |
 | **Comments**    | `// line` and `/* block */` (consumed, not emitted)                       |
 | **Inserted `;`**| Go's [automatic semicolon insertion](https://go.dev/ref/spec#Semicolons) is emulated at the lexer level |
 
@@ -182,13 +182,14 @@ go-lexer/
 ├── src/              # implementation (one .c per header + main.c)
 ├── examples/         # sample Go programs
 ├── tests/            # golden tests (cases + expected token streams)
-├── legacy/           # original Spanish-language version, kept for reference
 ├── Makefile
 └── LICENSE
 ```
 
-`legacy/` contains the original, untranslated version of the project and is not
-part of the build; it is kept only for comparison.
+Each header declares one module's public interface and the matching `.c` file
+implements it, so the dependency direction is easy to follow: `lexer` pulls
+characters from `input_buffer` and resolves identifiers through
+`symbol_table`, which is built on `hash_table` and `list`.
 
 ## Testing
 

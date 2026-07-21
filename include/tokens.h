@@ -66,7 +66,7 @@ typedef struct {
 #define OP_MUL_ASSIGN      370  /* *=  */
 #define OP_XOR_ASSIGN      371  /* ^=  */
 #define OP_MOD_ASSIGN      372  /* %=  */
-#define OP_ELLIPSIS        373  /* ... */
+#define OP_ELLIPSIS        373  /* ... (reserved: not scanned yet) */
 #define OP_NOT_EQUAL       374  /* !=  */
 #define OP_DEFINE          375  /* :=  */
 
